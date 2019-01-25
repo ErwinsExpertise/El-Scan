@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+
+	pb "gopkg.in/cheggaaa/pb.v2"
 )
 
 func readFile(filename string) []byte {
@@ -40,80 +42,117 @@ func decodeHex(content string) []byte {
 	return hexByte
 } //end decodeHex
 
+func RemoveDuplicatesFromSlice(s []string) []string {
+	m := make(map[string]bool)
+	for _, item := range s {
+		if _, ok := m[item]; ok {
+		} else {
+			m[item] = true
+		}
+	}
+
+	var result []string
+	for item, _ := range m {
+		result = append(result, item)
+	}
+	return result
+}
+
 func main() {
-	fmt.Println("El Scan - which is Spanish for \"The Scan\" ")
+	fmt.Println("El Scan - which is Spanish for \"The Scan\" \n\n\n")
+
+	fmt.Println("1 - Scan current directory recursivley")
+	fmt.Println("2 - Clean files") // currently not implemented
+	fmt.Println("3 - Help")
+	var input int
+	fmt.Scanln(&input)
 
 	infected := []string{}
 	exploits := map[string]string{
-		"eval_chr":             "/chr[\\s\r\n]*\\([\\s\r\n]*101[\\s\r\n]*\\)[\\s\r\n]*\\.[\\s\r\n]*chr[\\s\r\n]*\\([\\s\r\n]*118[\\s\r\n]*\\)[\\s\r\n]*\\.[\\s\r\n]*chr[\\s\r\n]*\\([\\s\r\n]*97[\\s\r\n]*\\)[\\s\r\n]*\\.[\\s\r\n]*chr[\\s\r\n]*\\([\\s\r\n]*108[\\s\r\n]*\\)/i",
-		"align":                "/(\\\\$\\w+=[^;]*)*;\\\\$\\w+=@?\\\\$\\w+\\(/i",
-		"b374k":                "/'ev'\\.'al'\\.'\\(\"\\?>/i",
-		"weevely3":             "/\\\\$\\w=\\\\$[a-zA-Z]\\('',\\\\$\\w\\);\\\\$\\w\\(\\);/i",
-		"c99_launcher":         "/;\\\\$\\w+\\(\\\\$\\w+(,\\s?\\\\$\\w+)+\\);/i",
-		"too_many_chr":         "/(chr\\([\\d]+\\)\\.){8}/i",
-		"concat":               "/(\\\\$[\\w\\[\\]\\'\\\"]+\\.[\n\r]*){10}/i",
-		"var_as_func":          "/\\\\$_(GET|POST|COOKIE|REQUEST|SERVER)[\\s\r\n]*\\[[^\\]]+\\][\\s\r\n]*\\(/i",
-		"extract_global":       "/extract\\([\\s\r\n]*\\\\$_(GET|POST|COOKIE|REQUEST|SERVER)/i",
-		"escaped_path":         "/(x[0-9abcdef]{2}[a-z0-9.-\\/]{1,4}){4,}/i",
-		"include_icon":         "/include\\(?[\\s\r\n]*(\\\"|\\')(.*?)(\\.|\\056\\0462E)(i|\\\\151|\\x69|\\105)(c|\\143\\099\\x63)(o|\\157\\111|\\x6f)(\\\"|\\')\\)?/mi", // Icon inclusion
-		"backdoor_code":        "/eva1fYlbakBcVSir/i",
-		"infected_comment":     "/\\/\\*[a-z0-9]{5}\\*\\//i",
-		"hex_char":             "/\\[Xx](5[Ff])/i",
-		"download_remote_code": "/echo\\s+file_get_contents[\\s\r\n]*\\([\\s\r\n]*base64_url_decode[\\s\r\n]*\\([\\s\r\n]*@*\\\\$_(GET|POST|SERVER|COOKIE|REQUEST)/i",
-		"globals_concat":       "/\\\\$GLOBALS\\[\\\\$GLOBALS['[a-z0-9]{4,}'\\]\\[\\d+\\]\\.\\\\$GLOBALS\\['[a-z-0-9]{4,}'\\]\\[\\d+\\]./i",
-		"globals_assign":       "/\\\\$GLOBALS\\['[a-z0-9]{5,}'\\] = \\\\$[a-z]+\\d+\\[\\d+\\]\\.\\\\$[a-z]+\\d+\\[\\d+\\]\\.\\\\$[a-z]+\\d+\\[\\d+\\]\\.\\\\$[a-z]+\\d+\\[\\d+\\]\\./i",
-		"clever_include":       "/include[\\s\r\n]*\\([\\s\r\n]*[^\\.]+\\.(png|jpe?g|gif|bmp)/i",
-		"basedir_bypass":       "/curl_init[\\s\r\n]*\\([\\s\r\n]*[\"']file:\\/\\//i",
-		"basedir_bypass2":      "/file\\:file\\:\\/\\//i",
-		"non_printable":        "/(function|return|base64_decode).{,256}[^\\x00-\\x1F\\x7F-\\xFF]{3}/i",
-		"double_var":           "/\\\\${[\\s\r\n]*\\\\${/i",
-		"double_var2":          "/\\${\\$[0-9a-zA-z]+}/i",
-		"hex_var":              "/\\\\$\\{\\\"\\\\x/i",
-		"register_function":    "/register_[a-z]+_function[\\s\r\n]*\\([\\s\r\n]*['\\\"][\\s\r\n]*(eval|assert|passthru|exec|include|system|shell_exec|`)/i", // https://github.com/nbs-system/php-malware-finder/issues/41
-		"safemode_bypass":      "/\\x00\\/\\.\\.\\/|LD_PRELOAD/i",
-		"ioncube_loader":       "/IonCube\\_loader/i",
+		"eval":         "(<\\?php|[;{}])[ \t]*@?(eval|preg_replace|system|assert|passthru|(pcntl_)?exec|shell_exec|call_user_func(_array)?)\\s*\\(",
+		"eval_comment": "(eval|preg_replace|system|assert|passthru|(pcntl_)?exec|shell_exec|call_user_func(_array)?)\\/\\*[^\\*]*\\*\\/\\(",
+		"b374k":        "'ev'.'al'",
+		"align":        "(\\$\\w+=[^;]*)*;\\$\\w+=@?\\$\\w+\\(",
+		"weevely3":     "\\$\\w=\\$[a-zA-Z]\\('',\\$\\w\\);\\$\\w\\(\\);",
+		"c99_launcher": ";\\$\\w+\\(\\$\\w+(,\\s?\\$\\w+)+\\);",
+		"nano":         "\\$[a-z0-9-_]+\\[[^]]+\\]\\(",
+		"ninja":        "(.?)base64_decode[^;]+",
+		"var_var":      "\\${\\$[0-9a-zA-z]+}",
+		"chr":          "(chr\\([\\d]+\\)\\.){8}",
+		"concat":       "(\\$[^\n\r]+\\.){5}",
+		"con_space":    "(\\$[^\n\r]+\\. ){5}",
+		"var_func":     "\\$_(GET|POST|COOKIE|REQUEST|SERVER)\\s*\\[[^\\]]+\\]\\s*\\(",
+		"base_by":      "/curl_init\\s*\\(\\s*[\"']file:\\/\\//",
+		"base_by2":     "file:file:///",
+		"exec":         "\b(eval|assert|passthru|exec|include|system|pcntl_exec|shell_exec|base64_decode|`|array_map|ob_start|call_user_func(_array)?)\\s*\\(\\s*(base64_decode|php:\\/\\/input|str_rot13|gz(inflate|uncompress)|getenv|pack|\\?\\$_(GET|REQUEST|POST|COOKIE|SERVER))",
+		"ini":          "ini_(get|set|restore)\\s*\\(\\s*['\"](safe_mode|open_basedir|disable_(function|classe)s|safe_mode_exec_dir|safe_mode_include_dir|register_globals|allow_url_include)/ nocase",
+		"includes":     "include\\s*\\(\\s*[^\\.]+\\.(png|jpg|gif|bmp)",
 	}
 
-	searchDir, _ := os.Getwd()
-
-	fileList := []string{}
-	err := filepath.Walk(searchDir, func(path string, f os.FileInfo, err error) error {
-		fileList = append(fileList, path)
-		return nil
-	})
-	if err != nil {
-		fmt.Print(err)
+	strip := map[string]string{
+		"com": "/\\/\\*.*?\\*\\/|\\/\\/.*?\n|\\#.*?\n/i",
+		"eva": "/(\\'|\\\")[\\s\r\n]*\\.[\\s\r\n]*('|\")/i",
 	}
 
-	for _, file := range fileList {
+	switch input {
 
-		fi, err2 := os.Stat(file)
-		if err2 != nil {
-			fmt.Println(err)
-			return
+	case 1:
+		searchDir, _ := os.Getwd()
+
+		fileList := []string{}
+		err := filepath.Walk(searchDir, func(path string, f os.FileInfo, err error) error {
+			fileList = append(fileList, path)
+			return nil
+		})
+		if err != nil {
+			fmt.Print(err)
 		}
-		switch mode := fi.Mode(); {
-		case mode.IsDir():
-			break
-		case mode.IsRegular():
-			bSlice := readFile(file)
-			content := byteToString(bSlice)
+		bar := pb.StartNew(len(fileList))
 
-			for exp := range exploits {
-				r := regexp.MustCompile(exploits[exp])
-				matches := r.FindAllString(content, -1)
+		for _, file := range fileList {
+			bar.Increment()
+			fi, err2 := os.Stat(file)
+			if err2 != nil {
+				fmt.Println(err)
+				return
+			}
+			switch mode := fi.Mode(); {
+			case mode.IsDir():
+				break
+			case mode.IsRegular():
+				bSlice := readFile(file)
+				content := byteToString(bSlice)
 
-				if matches != nil {
-					infected = append(infected, file)
+				for stri := range strip {
+					str := stripFile(content, "", strip[stri])
+					for exp := range exploits {
+						r := regexp.MustCompile(exploits[exp])
+						matches := r.FindAllString(str, -1)
+
+						if matches != nil {
+							infected = append(infected, file+" - "+exp)
+							break
+						}
+					}
 				}
 			}
+
 		}
+		bar.Finish()
+		infect := RemoveDuplicatesFromSlice(infected)
+		fmt.Printf("Here is a list of infected/suspicious files: \n")
+		for i := 0; i < len(infect); i++ {
+			fmt.Println(infect[i])
+		}
+		break
+	case 2:
+		fmt.Println("Not yet implemented")
+		break
+	case 3:
+		fmt.Println("This tool is made to scan php files for malicious code")
+		break
 
-	}
-
-	fmt.Printf("Here is a list of infected files: \n")
-	for i := 0; i < len(infected); i++ {
-		fmt.Println(infected[i])
-	}
+	} //end switch
 
 } //end main
+
