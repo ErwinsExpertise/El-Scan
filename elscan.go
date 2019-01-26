@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/hex"
+	"crypto/md5"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,58 +10,13 @@ import (
 	pb "gopkg.in/cheggaaa/pb.v2"
 )
 
-func readFile(filename string) []byte {
-	file, err := ioutil.ReadFile(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return file
-} //end readFile
-
-func byteToString(byteSlice []byte) string {
-	str := string(byteSlice)
-	return str
-} //end byteToString
-
-func stripFile(content string, replace string, reg string) string {
-	var r = regexp.MustCompile(reg)
-
-	str := r.ReplaceAllString(content, replace)
-
-	return str
-} //end stripFile
-
-func decodeHex(content string) []byte {
-	hexByte, err := hex.DecodeString(content)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return hexByte
-} //end decodeHex
-
-func RemoveDuplicatesFromSlice(s []string) []string {
-	m := make(map[string]bool)
-	for _, item := range s {
-		if _, ok := m[item]; ok {
-		} else {
-			m[item] = true
-		}
-	}
-
-	var result []string
-	for item, _ := range m {
-		result = append(result, item)
-	}
-	return result
-}
-
 func main() {
 	fmt.Println("El Scan - which is Spanish for \"The Scan\" \n\n\n")
 
-	fmt.Println("1 - Scan current directory recursivley")
-	fmt.Println("2 - Clean files") // currently not implemented
-	fmt.Println("3 - Help")
+	fmt.Println("1 - Scan for known malicious code")
+	fmt.Println("2 - Scan for known signatures")
+	fmt.Println("3 - Clean files") // currently not implemented
+	fmt.Println("4 - Help")
 	var input int
 	fmt.Scanln(&input)
 
@@ -145,14 +98,68 @@ func main() {
 			fmt.Println(infect[i])
 		}
 		break
-	case 2:
+	case 2: // This is for signature scanning
+		sign := sigs{}
+
+		sig := sign.unloadSigs("signatures.tgz")
+
+		searchDir, _ := os.Getwd()
+
+		fileList := []string{}
+		err := filepath.Walk(searchDir, func(path string, f os.FileInfo, err error) error {
+			fileList = append(fileList, path)
+			return nil
+		})
+		if err != nil {
+			fmt.Print(err)
+		}
+		bar := pb.StartNew(len(fileList))
+
+		for _, file := range fileList {
+			bar.Increment()
+			fi, err2 := os.Stat(file)
+			if err2 != nil {
+				fmt.Println(err)
+				return
+			}
+			switch mode := fi.Mode(); {
+			case mode.IsDir():
+				break
+			case mode.IsRegular():
+				bSlice := readFile(file)
+
+				oCheck := getCheckSum(bSlice)
+
+				for si := range sig {
+					md := md5.Sum([]byte(sig[si]))
+
+					if oCheck == md {
+						infected = append(infected, file)
+					}
+				}
+
+				break
+			}
+
+		}
+		bar.Finish()
+		infect := RemoveDuplicatesFromSlice(infected)
+		fmt.Printf("Here is a list of infected/suspicious files: \n")
+		for i := 0; i < len(infect); i++ {
+			fmt.Println(infect[i])
+		}
+		break
+
+	case 3:
 		fmt.Println("Not yet implemented")
 		break
-	case 3:
+	case 4:
 		fmt.Println("This tool is made to scan php files for malicious code")
+		break
+	default:
+		fmt.Println("Unknown option - Please select a valid option")
 		break
 
 	} //end switch
 
 } //end main
-
