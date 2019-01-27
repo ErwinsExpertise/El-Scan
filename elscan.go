@@ -2,10 +2,14 @@ package main
 
 import (
 	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	pb "gopkg.in/cheggaaa/pb.v2"
 )
@@ -15,7 +19,7 @@ func main() {
 
 	fmt.Println("1 - Scan for known malicious code")
 	fmt.Println("2 - Scan for known signatures")
-	fmt.Println("3 - Clean files") // currently not implemented
+	fmt.Println("3 - Scan WordPress files for checksum") // currently not implemented
 	fmt.Println("4 - Help")
 	var input int
 	fmt.Scanln(&input)
@@ -151,7 +155,64 @@ func main() {
 		break
 
 	case 3:
-		fmt.Println("Not yet implemented")
+		checkMD := checksum{}
+		var mds map[string]interface{}
+		version := getVersion()[1:]
+		checkMD.getWPMD5(version)
+		convert, ok := checkMD["checksums"].(map[string]interface{})
+		if ok {
+			mds = convert[version].(map[string]interface{})
+		}
+
+		searchDir, _ := os.Getwd()
+
+		fileList := []string{}
+		err := filepath.Walk(searchDir, func(path string, f os.FileInfo, err error) error {
+			fileList = append(fileList, path)
+			return nil
+		})
+		if err != nil {
+			fmt.Print(err)
+		}
+
+		for _, file := range fileList {
+			fi, err2 := os.Stat(file)
+			if err2 != nil {
+				fmt.Println(err)
+				return
+			}
+			switch mode := fi.Mode(); {
+			case mode.IsDir():
+				break
+			case mode.IsRegular():
+				loc := strings.Replace(file, searchDir, "", -1)
+				loc = strings.Replace(loc, "\\", "/", -1)
+				md := mds[loc[1:]]
+
+				f, err := os.Open(file)
+				if err != nil {
+					log.Fatal(err)
+				}
+				defer f.Close()
+
+				oCheck := md5.New()
+				if _, err := io.Copy(oCheck, f); err != nil {
+					log.Fatal(err)
+				}
+				oMD5 := hex.EncodeToString(oCheck.Sum(nil))
+				if _, ok := mds[loc[1:]]; ok {
+					if oMD5 != md {
+						infected = append(infected, file)
+					}
+				}
+
+			}
+		}
+		infect := RemoveDuplicatesFromSlice(infected)
+		fmt.Printf("Here is a list of infected/suspicious files: \n")
+		for i := 0; i < len(infect); i++ {
+			fmt.Println(infect[i])
+		}
 		break
 	case 4:
 		fmt.Println("This tool is made to scan php files for malicious code")
