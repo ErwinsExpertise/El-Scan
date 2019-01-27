@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -15,16 +14,18 @@ import (
 )
 
 func main() {
-	fmt.Println("El Scan - which is Spanish for \"The Scan\" \n\n\n")
+	fmt.Println("El Scan - which is Spanish for \"The Scan\" \n\nInitializing, please wait...  \n\n\n")
+	infected := []string{}
+	searchDir, _ := os.Getwd()
+	fileList := getFileTree()
 
 	fmt.Println("1 - Scan for known malicious code")
 	fmt.Println("2 - Scan for known signatures")
-	fmt.Println("3 - Scan WordPress files for checksum") // currently not implemented
-	fmt.Println("4 - Help")
+	fmt.Println("3 - Scan WordPress files for checksum")
+	fmt.Println("4 - Help\n")
 	var input int
 	fmt.Scanln(&input)
 
-	infected := []string{}
 	exploits := map[string]string{
 		"eval":         "(<\\?php|[;{}])[ \t]*@?(eval|preg_replace|system|assert|passthru|(pcntl_)?exec|shell_exec|call_user_func(_array)?)\\s*\\(",
 		"eval_comment": "(eval|preg_replace|system|assert|passthru|(pcntl_)?exec|shell_exec|call_user_func(_array)?)\\/\\*[^\\*]*\\*\\/\\(",
@@ -50,108 +51,53 @@ func main() {
 		"com": "/\\/\\*.*?\\*\\/|\\/\\/.*?\n|\\#.*?\n/i",
 		"eva": "/(\\'|\\\")[\\s\r\n]*\\.[\\s\r\n]*('|\")/i",
 	}
+	bar := pb.StartNew(len(fileList))
 
 	switch input {
 
 	case 1:
-		searchDir, _ := os.Getwd()
-
-		fileList := []string{}
-		err := filepath.Walk(searchDir, func(path string, f os.FileInfo, err error) error {
-			fileList = append(fileList, path)
-			return nil
-		})
-		if err != nil {
-			fmt.Print(err)
-		}
-		bar := pb.StartNew(len(fileList))
 
 		for _, file := range fileList {
 			bar.Increment()
-			fi, err2 := os.Stat(file)
-			if err2 != nil {
-				fmt.Println(err)
-				return
-			}
-			switch mode := fi.Mode(); {
-			case mode.IsDir():
-				break
-			case mode.IsRegular():
-				bSlice := readFile(file)
-				content := byteToString(bSlice)
+			bSlice := readFile(file)
+			content := byteToString(bSlice)
 
-				for stri := range strip {
-					str := stripFile(content, "", strip[stri])
-					for exp := range exploits {
-						r := regexp.MustCompile(exploits[exp])
-						matches := r.FindAllString(str, -1)
+			for stri := range strip {
+				str := stripFile(content, "", strip[stri])
+				for exp := range exploits {
+					r := regexp.MustCompile(exploits[exp])
+					matches := r.FindAllString(str, -1)
 
-						if matches != nil {
-							infected = append(infected, file+" - "+exp)
-							break
-						}
+					if matches != nil {
+						infected = append(infected, file+" - "+exp)
 					}
 				}
 			}
-
 		}
 		bar.Finish()
-		infect := RemoveDuplicatesFromSlice(infected)
-		fmt.Printf("Here is a list of infected/suspicious files: \n")
-		for i := 0; i < len(infect); i++ {
-			fmt.Println(infect[i])
-		}
+		printInfected(infected)
 		break
 	case 2: // This is for signature scanning
 		sign := sigs{}
-
 		sig := sign.unloadSigs("signatures.tgz")
-
-		searchDir, _ := os.Getwd()
-
-		fileList := []string{}
-		err := filepath.Walk(searchDir, func(path string, f os.FileInfo, err error) error {
-			fileList = append(fileList, path)
-			return nil
-		})
-		if err != nil {
-			fmt.Print(err)
-		}
-		bar := pb.StartNew(len(fileList))
 
 		for _, file := range fileList {
 			bar.Increment()
-			fi, err2 := os.Stat(file)
-			if err2 != nil {
-				fmt.Println(err)
-				return
-			}
-			switch mode := fi.Mode(); {
-			case mode.IsDir():
-				break
-			case mode.IsRegular():
-				bSlice := readFile(file)
 
-				oCheck := getCheckSum(bSlice)
+			bSlice := readFile(file)
+			oCheck := getCheckSum(bSlice)
 
-				for si := range sig {
-					md := md5.Sum([]byte(sig[si]))
+			for si := range sig {
+				md := md5.Sum([]byte(sig[si]))
 
-					if oCheck == md {
-						infected = append(infected, file)
-					}
+				if oCheck == md {
+					infected = append(infected, file)
 				}
-
-				break
 			}
+		}
 
-		}
 		bar.Finish()
-		infect := RemoveDuplicatesFromSlice(infected)
-		fmt.Printf("Here is a list of infected/suspicious files: \n")
-		for i := 0; i < len(infect); i++ {
-			fmt.Println(infect[i])
-		}
+		printInfected(infected)
 		break
 
 	case 3:
@@ -164,55 +110,32 @@ func main() {
 			mds = convert[version].(map[string]interface{})
 		}
 
-		searchDir, _ := os.Getwd()
-
-		fileList := []string{}
-		err := filepath.Walk(searchDir, func(path string, f os.FileInfo, err error) error {
-			fileList = append(fileList, path)
-			return nil
-		})
-		if err != nil {
-			fmt.Print(err)
-		}
-
 		for _, file := range fileList {
-			fi, err2 := os.Stat(file)
-			if err2 != nil {
-				fmt.Println(err)
-				return
+			bar.Increment()
+			loc := strings.Replace(file, searchDir, "", -1)
+			loc = strings.Replace(loc, "\\", "/", -1)
+			md := mds[loc[1:]]
+
+			f, err := os.Open(file)
+			if err != nil {
+				log.Fatal(err)
 			}
-			switch mode := fi.Mode(); {
-			case mode.IsDir():
-				break
-			case mode.IsRegular():
-				loc := strings.Replace(file, searchDir, "", -1)
-				loc = strings.Replace(loc, "\\", "/", -1)
-				md := mds[loc[1:]]
+			defer f.Close()
 
-				f, err := os.Open(file)
-				if err != nil {
-					log.Fatal(err)
-				}
-				defer f.Close()
-
-				oCheck := md5.New()
-				if _, err := io.Copy(oCheck, f); err != nil {
-					log.Fatal(err)
-				}
-				oMD5 := hex.EncodeToString(oCheck.Sum(nil))
-				if _, ok := mds[loc[1:]]; ok {
-					if oMD5 != md {
-						infected = append(infected, file)
-					}
-				}
-
+			oCheck := md5.New()
+			if _, err := io.Copy(oCheck, f); err != nil {
+				log.Fatal(err)
 			}
+			oMD5 := hex.EncodeToString(oCheck.Sum(nil))
+			if _, ok := mds[loc[1:]]; ok {
+				if oMD5 != md {
+					infected = append(infected, file)
+				}
+			}
+
 		}
-		infect := RemoveDuplicatesFromSlice(infected)
-		fmt.Printf("Here is a list of infected/suspicious files: \n")
-		for i := 0; i < len(infect); i++ {
-			fmt.Println(infect[i])
-		}
+		bar.Finish()
+		printInfected(infected)
 		break
 	case 4:
 		fmt.Println("This tool is made to scan php files for malicious code")
