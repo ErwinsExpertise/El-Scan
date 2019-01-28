@@ -95,7 +95,7 @@ func getFileTree() []string {
 func printInfected(in []string) {
 
 	RemoveDuplicatesFromSlice(in)
-	fmt.Printf("\nHere is a list of infected/suspicious files: \n")
+	fmt.Printf("\nThere was %v suspicious files found.\n\nList of infected/suspicious files: \n", len(in))
 	for i := 0; i < len(in); i++ {
 		fmt.Println(in[i])
 	}
